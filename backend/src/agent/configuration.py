@@ -29,6 +29,34 @@ class Configuration(BaseModel):
         },
     )
 
+    use_local_model: bool = Field(
+        default=False,
+        metadata={
+            "description": "Whether to use local vLLM model instead of Gemini models."
+        },
+    )
+
+    local_model_base_url: str = Field(
+        default="http://localhost:8001/v1",
+        metadata={
+            "description": "Base URL for the local vLLM model API."
+        },
+    )
+
+    local_model_api_key: str = Field(
+        default="dummy-key",
+        metadata={
+            "description": "API key for the local vLLM model (can be dummy)."
+        },
+    )
+
+    local_model_name: str = Field(
+        default="8001vllm",
+        metadata={
+            "description": "Name of the local vLLM model."
+        },
+    )
+
     number_of_initial_queries: int = Field(
         default=3,
         metadata={"description": "The number of initial search queries to generate."},

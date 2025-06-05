@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph
 from langgraph.graph import START, END
 from langchain_core.runnables import RunnableConfig
 from google.genai import Client
+from langchain_openai import ChatOpenAI
 
 from agent.state import (
     OverallState,
@@ -40,6 +41,34 @@ if os.getenv("GEMINI_API_KEY") is None:
 genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
+def get_llm_model(model_name: str, configurable: Configuration, temperature: float = 1.0):
+    """Get the appropriate LLM model based on configuration.
+    
+    Args:
+        model_name: The model name to use
+        configurable: Configuration object containing model settings
+        temperature: Temperature setting for the model
+        
+    Returns:
+        LLM instance (either ChatGoogleGenerativeAI or ChatOpenAI)
+    """
+    if configurable.use_local_model:
+        return ChatOpenAI(
+            model=configurable.local_model_name,
+            base_url=configurable.local_model_base_url,
+            api_key=configurable.local_model_api_key,
+            temperature=temperature,
+            max_retries=2,
+        )
+    else:
+        return ChatGoogleGenerativeAI(
+            model=model_name,
+            temperature=temperature,
+            max_retries=2,
+            api_key=os.getenv("GEMINI_API_KEY"),
+        )
+
+
 # Nodes
 def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
     """LangGraph node that generates a search queries based on the User's question.
@@ -60,13 +89,8 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
     if state.get("initial_search_query_count") is None:
         state["initial_search_query_count"] = configurable.number_of_initial_queries
 
-    # init Gemini 2.0 Flash
-    llm = ChatGoogleGenerativeAI(
-        model=configurable.query_generator_model,
-        temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
-    )
+    # init LLM model (Gemini or local)
+    llm = get_llm_model(configurable.query_generator_model, configurable, temperature=1.0)
     structured_llm = llm.with_structured_output(SearchQueryList)
 
     # Format the prompt
@@ -96,6 +120,7 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     """LangGraph node that performs web research using the native Google Search API tool.
 
     Executes a web search using the native Google Search API tool in combination with Gemini 2.0 Flash.
+    For local models, provides a simulated research response.
 
     Args:
         state: Current graph state containing the search query and research loop count
@@ -106,6 +131,35 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     """
     # Configure
     configurable = Configuration.from_runnable_config(config)
+    
+    # Check if using local model
+    if configurable.use_local_model:
+        # For local models, provide a simulated research response
+        # since they cannot access Google Search tools
+        llm = get_llm_model(configurable.query_generator_model, configurable)
+        formatted_prompt = f"""
+        Based on the research topic: {state["search_query"]}
+        
+        Please provide a comprehensive research response about this topic.
+        Include relevant information, key points, and insights.
+        Format your response as if you were summarizing research findings.
+        
+        Current date: {get_current_date()}
+        """
+        
+        response = llm.invoke(formatted_prompt)
+        
+        return {
+            "sources_gathered": [{
+                "short_url": "[LOCAL_MODEL]",
+                "value": "Local model research simulation",
+                "label": "Local Model Research"
+            }],
+            "search_query": [state["search_query"]],
+            "web_research_result": [response.content],
+        }
+    
+    # Original Google Search implementation for Gemini models
     formatted_prompt = web_searcher_instructions.format(
         current_date=get_current_date(),
         research_topic=state["search_query"],
@@ -162,13 +216,8 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         research_topic=get_research_topic(state["messages"]),
         summaries="\n\n---\n\n".join(state["web_research_result"]),
     )
-    # init Reasoning Model
-    llm = ChatGoogleGenerativeAI(
-        model=reasoning_model,
-        temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
-    )
+    # init Reasoning Model (Gemini or local)
+    llm = get_llm_model(reasoning_model, configurable, temperature=1.0)
     result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
 
     return {
@@ -241,23 +290,27 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         summaries="\n---\n\n".join(state["web_research_result"]),
     )
 
-    # init Reasoning Model, default to Gemini 2.5 Flash
-    llm = ChatGoogleGenerativeAI(
-        model=reasoning_model,
-        temperature=0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
-    )
+    # init Reasoning Model (Gemini or local)
+    llm = get_llm_model(reasoning_model, configurable, temperature=0)
     result = llm.invoke(formatted_prompt)
 
     # Replace the short urls with the original urls and add all used urls to the sources_gathered
     unique_sources = []
     for source in state["sources_gathered"]:
-        if source["short_url"] in result.content:
-            result.content = result.content.replace(
-                source["short_url"], source["value"]
-            )
-            unique_sources.append(source)
+        # Skip URL replacement for local model sources
+        if isinstance(source, dict) and "short_url" in source:
+            if source["short_url"] in result.content:
+                result.content = result.content.replace(
+                    source["short_url"], source["value"]
+                )
+                unique_sources.append(source)
+        elif isinstance(source, str):
+            # Handle legacy string format for backward compatibility
+            unique_sources.append({
+                "short_url": "[LEGACY]",
+                "value": source,
+                "label": "Legacy Source"
+            })
 
     return {
         "messages": [AIMessage(content=result.content)],

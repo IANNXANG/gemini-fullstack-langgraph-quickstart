@@ -137,11 +137,24 @@ export default function App() {
           id: Date.now().toString(),
         },
       ];
-      thread.submit({
-        messages: newMessages,
+      
+      // Configure local model settings if selected
+      const configurable: any = {
         initial_search_query_count: initial_search_query_count,
         max_research_loops: max_research_loops,
         reasoning_model: model,
+      };
+      
+      if (model === "local-vllm") {
+        configurable.use_local_model = true;
+        configurable.local_model_base_url = "http://localhost:8001/v1";
+        configurable.local_model_api_key = "dummy-key";
+        configurable.local_model_name = "8001vllm";
+      }
+      
+      thread.submit({
+        messages: newMessages,
+        ...configurable,
       });
     },
     [thread]

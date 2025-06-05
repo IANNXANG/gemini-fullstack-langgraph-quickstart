@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { SquarePen, Brain, Send, StopCircle, Zap, Cpu } from "lucide-react";
+import { SquarePen, Brain, Send, StopCircle, Zap, Cpu, Server } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -158,6 +158,14 @@ export const InputForm: React.FC<InputFormProps> = ({
                 >
                   <div className="flex items-center">
                     <Cpu className="h-4 w-4 mr-2 text-purple-400" /> 2.5 Pro
+                  </div>
+                </SelectItem>
+                <SelectItem
+                  value="local-vllm"
+                  className="hover:bg-neutral-600 focus:bg-neutral-600 cursor-pointer"
+                >
+                  <div className="flex items-center">
+                    <Server className="h-4 w-4 mr-2 text-green-400" /> Local vLLM
                   </div>
                 </SelectItem>
               </SelectContent>
